@@ -1,0 +1,53 @@
+name: Autograde (Renode)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  grade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout student repo
+        uses: actions/checkout@v4
+
+      - name: Checkout autograding repo
+        uses: actions/checkout@v4
+        with:
+          repository: YOUR_GH_USERNAME_OR_ORG/autograding_repo
+          path: autograding_repo
+
+      - name: Install toolchain & python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi python3
+
+      - name: Build student firmware (must produce ./firmware.elf)
+        run: |
+          make
+          test -f firmware.elf || (echo "ERROR: firmware.elf not found at repo root" && exit 1)
+
+      - name: Prepare ELF and output dirs for simulator
+        run: |
+          mkdir -p elf out
+          cp firmware.elf elf/firmware.elf
+
+      - name: Run Renode (headless via Docker)
+        run: |
+          docker run --rm \
+            -v $PWD:/workspace \
+            -w /workspace \
+            antmicro/renode:latest \
+            renode -e 'i @autograding_repo/renode/stm32f0_nucleo.resc' --disable-xwt
+
+      - name: Grade LED 1Hz
+        run: |
+          python3 autograding_repo/tests/check_led_period.py
+
+      - name: Upload GPIO log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renode_gpio_log
+          path: out/renode_gpio_log.csv
+          if-no-files-found: error
