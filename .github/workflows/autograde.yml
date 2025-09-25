@@ -14,8 +14,10 @@ jobs:
       - name: Checkout autograding repo
         uses: actions/checkout@v4
         with:
-          repository: YOUR_GH_USERNAME_OR_ORG/autograding_repo
+          repository: nadgirabhishek/autograding_repo   # <<< put YOUR repo here
           path: autograding_repo
+          ref: main                                     # or the branch you use
+
 
       - name: Install toolchain & python
         run: |
