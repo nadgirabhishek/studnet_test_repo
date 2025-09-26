@@ -1,17 +1,14 @@
+/* STM32F042: 32 KB Flash @ 0x0800_0000, 6 KB SRAM @ 0x2000_0000 */
 ENTRY(Reset_Handler)
 
-/* Adjust sizes to your exact STM32F0 part if needed */
 MEMORY
 {
-  FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 64K
-  RAM   (rwx): ORIGIN = 0x20000000, LENGTH = 8K
+  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 32K
+  RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 6K
 }
 
-/* Initial stack pointer */
+/* Top of stack = end of RAM */
 _estack = ORIGIN(RAM) + LENGTH(RAM);
-
-/* Used by startup to copy .data */
-_sidata = LOADADDR(.data);
 
 SECTIONS
 {
@@ -21,35 +18,41 @@ SECTIONS
     KEEP(*(.isr_vector))
   } > FLASH
 
+  /* Code + const */
   .text :
   {
+    _stext = .;
     *(.text*)
     *(.rodata*)
     *(.glue_7) *(.glue_7t)
     *(.eh_frame*)
-
     . = ALIGN(4);
-    KEEP(*(.init))
-    KEEP(*(.fini))
-    . = ALIGN(4);
-    _etext = .;
+    _etext = .;              /* End of text in FLASH; use as LMA for .data */
   } > FLASH
 
+  /* Exception unwind tables (if any) */
   .ARM.exidx :
   {
     *(.ARM.exidx*)
     *(.ARM.extab*)
+    . = ALIGN(4);
   } > FLASH
 
-  .data : AT (ADDR(.text) + SIZEOF(.text) + SIZEOF(.ARM.exidx))
+  /* Initialized data lives in RAM but is loaded from FLASH at _etext */
+  .data : AT ( _etext )
   {
     . = ALIGN(4);
     _sdata = .;
     *(.data*)
+    *(.gnu.linkonce.d*)
     . = ALIGN(4);
     _edata = .;
   } > RAM
 
+  /* Alias used by startup for copy source */
+  _sidata = _etext;
+
+  /* Uninitialized data */
   .bss (NOLOAD) :
   {
     . = ALIGN(4);
