@@ -46,10 +46,14 @@ jobs:
         run: |
           python3 autograding_repo/tests/check_led_period.py
 
-      - name: Upload GPIO log
+
+      - name: Upload Renode logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: renode_gpio_log
-          path: out/renode_gpio_log.csv
-          if-no-files-found: error
+          name: renode_logs
+          path: |
+            out/renode_monitor.log
+            out/renode_gpio_log.csv
+          if-no-files-found: ignore
+
