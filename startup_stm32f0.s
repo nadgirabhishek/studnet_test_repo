@@ -1,100 +1,122 @@
-/* startup_stm32f0.s — Cortex-M0 safe startup
- * - No IT blocks (Thumb-2) and no post-indexed LDR/STR
- * - Copies .data from FLASH (_etext) to RAM
- * - Zeros .bss
- * - Jumps to main
- */
+/* Minimal STM32F0 (Cortex-M0) startup file with correct SysTick override and VTOR set */
 
 .syntax unified
 .cpu cortex-m0
 .thumb
 
-/* Externs from linker script */
-.global _estack
-.extern _etext
-.extern __data_start__
-.extern __data_end__
-.extern __bss_start__
-.extern __bss_end__
+/* External symbols provided by the linker script */
+.extern _sidata
+.extern _sdata
+.extern _edata
+.extern _sbss
+.extern _ebss
+.extern _estack
 .extern main
 
-/* Weak core handlers map to Default_Handler unless overridden in C */
-.weak  NMI_Handler, HardFault_Handler, SVC_Handler, PendSV_Handler, SysTick_Handler
-.thumb_set NMI_Handler,     Default_Handler
-.thumb_set HardFault_Handler, Default_Handler
-.thumb_set SVC_Handler,     Default_Handler
-.thumb_set PendSV_Handler,  Default_Handler
-/* SysTick_Handler can be provided by your C code; otherwise defaults */
-.thumb_set SysTick_Handler, Default_Handler
-
-/* ---------------- Vector Table ---------------- */
+/*----------------------------------------------------------------------------
+ * Vector table
+ *---------------------------------------------------------------------------*/
 .section .isr_vector, "a", %progbits
 .align  2
 .global g_pfnVectors
-g_pfnVectors:
-  .word _estack            /* 0: Initial MSP value (provided by linker) */
-  .word Reset_Handler      /* 1: Reset */
-  .word NMI_Handler        /* 2: NMI */
-  .word HardFault_Handler  /* 3: HardFault */
-  .word 0                  /* 4: Reserved */
-  .word 0                  /* 5: Reserved */
-  .word 0                  /* 6: Reserved */
-  .word 0                  /* 7: Reserved */
-  .word 0                  /* 8: Reserved */
-  .word 0                  /* 9: Reserved */
-  .word 0                  /* 10: Reserved */
-  .word SVC_Handler        /* 11: SVCall */
-  .word 0                  /* 12: Reserved */
-  .word 0                  /* 13: Reserved */
-  .word PendSV_Handler     /* 14: PendSV */
-  .word SysTick_Handler    /* 15: SysTick */
+.type   g_pfnVectors, %object
 
-/* If you want, you can extend with device-specific IRQs here,
- * all defaulting to Default_Handler. For minimal bring-up this
- * core table is enough.
+g_pfnVectors:
+  .word  _estack            /* Initial Stack Pointer */
+  .word  Reset_Handler      /* Reset */
+  .word  NMI_Handler        /* NMI */
+  .word  HardFault_Handler  /* HardFault */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  SVC_Handler        /* SVCall */
+  .word  0                  /* Reserved */
+  .word  0                  /* Reserved */
+  .word  PendSV_Handler     /* PendSV */
+  .word  SysTick_Handler    /* SysTick (IRQ 15) */
+
+/* If you have device-specific IRQs, list them here after SysTick.
+ * For a basic template, we leave them out or alias them in Default_Handler.
  */
 
-/* ---------------- Reset Handler ---------------- */
-.section .text.Reset_Handler, "ax", %progbits
-.align  2
-.thumb_func
+/*----------------------------------------------------------------------------
+ * Default weak handlers
+ *---------------------------------------------------------------------------*/
+.text
+.thumb
+.align 1
+
+/* Declare handlers weak so user code can override them */
+.weak  NMI_Handler
+.weak  HardFault_Handler
+.weak  SVC_Handler
+.weak  PendSV_Handler
+.weak  SysTick_Handler
+
+/* All but SysTick get aliased to Default_Handler.
+ * DO NOT alias SysTick_Handler, so a C definition overrides properly.
+ */
+.thumb_set NMI_Handler,       Default_Handler
+.thumb_set HardFault_Handler, Default_Handler
+.thumb_set SVC_Handler,       Default_Handler
+.thumb_set PendSV_Handler,    Default_Handler
+/* No alias for SysTick_Handler on purpose */
+
+/*----------------------------------------------------------------------------
+ * Reset handler: init data/bss, set VTOR, enable IRQs, call main
+ *---------------------------------------------------------------------------*/
 .global Reset_Handler
+.type   Reset_Handler, %function
 Reset_Handler:
-  /* r0 = src (FLASH image), r1 = dst (RAM), r2 = end */
-  ldr   r0, =_etext
-  ldr   r1, =__data_start__
-  ldr   r2, =__data_end__
-1:                                /* copy .data */
+  /* Copy .data from FLASH to RAM */
+  ldr   r0, =_sidata
+  ldr   r1, =_sdata
+  ldr   r2, =_edata
+1:
   cmp   r1, r2
-  bge   2f                        /* done when dst >= end */
-  ldr   r3, [r0]                  /* r3 = *src */
-  adds  r0, r0, #4                /* src += 4 */
-  str   r3, [r1]                  /* *dst = r3 */
-  adds  r1, r1, #4                /* dst += 4 */
-  b     1b
-2:
-  /* zero .bss: r0 = bss, r1 = end, r2 = 0 */
-  ldr   r0, =__bss_start__
-  ldr   r1, =__bss_end__
+  ittt  lt
+  ldrlt r3, [r0], #4
+  strlt r3, [r1], #4
+  blt   1b
+
+  /* Zero .bss */
+  ldr   r0, =_sbss
+  ldr   r1, =_ebss
   movs  r2, #0
-3:
+2:
   cmp   r0, r1
-  bge   4f
-  str   r2, [r0]
-  adds  r0, r0, #4
-  b     3b
-4:
-  /* call main() */
+  it    lt
+  strlt r2, [r0], #4
+  blt   2b
+
+  /* Point VTOR at our vector table (SCB->VTOR = &g_pfnVectors) */
+  ldr   r0, =g_pfnVectors
+  ldr   r1, =0xE000ED08   /* SCB->VTOR */
+  str   r0, [r1]
+
+  /* Enable IRQs just in case (should be enabled by default) */
+  cpsie i
+
+  /* Call main */
   bl    main
 
-  /* if main returns, loop forever */
-5:
-  b     5b
+  /* If main returns, loop forever */
+3:
+  b     3b
 
-/* ---------------- Default Handler ---------------- */
-.section .text.Default_Handler, "ax", %progbits
-.align  2
-.thumb_func
+.size Reset_Handler, .-Reset_Handler
+
+/*----------------------------------------------------------------------------
+ * Default handler
+ *---------------------------------------------------------------------------*/
 .global Default_Handler
+.type   Default_Handler, %function
 Default_Handler:
-  b     Default_Handler
+  /* Stay here if an unexpected interrupt occurs */
+  b Default_Handler
+
+.size Default_Handler, .-Default_Handler

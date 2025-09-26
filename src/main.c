@@ -4,9 +4,10 @@
 #define LED_PIN 5
 #define SYSTEM_CORE_CLOCK 8000000UL  // HSI 8 MHz default after reset on STM32F0
 
-volatile uint32_t g_ms = 0;
 
+volatile uint32_t g_ms;
 void SysTick_Handler(void) { g_ms++; }
+
 
 static void delay_ms(uint32_t ms) {
     uint32_t start = g_ms;

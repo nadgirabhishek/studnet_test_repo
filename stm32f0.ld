@@ -1,14 +1,23 @@
-/* STM32F091RC: 256KB Flash, 32KB RAM */
+/* Minimal STM32F0 linker script ensuring vector table is first in FLASH */
+
+ENTRY(Reset_Handler)
+
+/* Adjust sizes to your exact STM32F0 part if needed */
 MEMORY
 {
-  FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 256K
-  RAM   (rwx): ORIGIN = 0x20000000, LENGTH = 32K
+  FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 64K
+  RAM   (rwx): ORIGIN = 0x20000000, LENGTH = 8K
 }
 
+/* Initial stack pointer: top of RAM */
 _estack = ORIGIN(RAM) + LENGTH(RAM);
+
+/* Provide symbols used by startup */
+_sidata = LOADADDR(.data);
 
 SECTIONS
 {
+  /* Vector table at the very beginning of FLASH */
   .isr_vector :
   {
     KEEP(*(.isr_vector))
@@ -16,21 +25,59 @@ SECTIONS
 
   .text :
   {
-    *(.text*) *(.rodata*) *(.glue_7) *(.glue_7t)
+    *(.text*) 
+    *(.rodata*)
+    *(.gnu.linkonce.t*)
+    *(.gnu.linkonce.r*)
+
+    /* Exception unwinding data */
+    *(.glue_7) *(.glue_7t)
+    *(.eh_frame*)
+
+    /* ARM build attributes */
+    . = ALIGN(4);
+    KEEP(*(.init))
+    KEEP(*(.fini))
+
+    . = ALIGN(4);
     _etext = .;
   } > FLASH
 
-  .data : AT ( _etext )
+  /* ARM.exidx (if any) must be in FLASH too */
+  .ARM.exidx :
   {
-    __data_start__ = .;
+    *(.ARM.exidx*)
+    *(.ARM.extab*)
+  } > FLASH
+
+  /* Initialized data goes in RAM, load from FLASH */
+  .data : AT (ADDR(.text) + SIZEOF(.text) + SIZEOF(.ARM.exidx))
+  {
+    . = ALIGN(4);
+    _sdata = .;
     *(.data*)
-    __data_end__ = .;
+    *(.gnu.linkonce.d*)
+    . = ALIGN(4);
+    _edata = .;
   } > RAM
 
+  /* Uninitialized data */
   .bss (NOLOAD) :
   {
-    __bss_start__ = .;
-    *(.bss*) *(COMMON)
-    __bss_end__ = .;
+    . = ALIGN(4);
+    _sbss = .;
+    *(.bss*)
+    *(COMMON)
+    . = ALIGN(4);
+    _ebss = .;
   } > RAM
+
+  /* Optional heap/stack reservations if you want explicit sizes
+     Otherwise, SP uses _estack and heap uses remaining space. */
+  /* ._user_heap_stack (NOLOAD) :
+  {
+    . = ALIGN(8);
+    PROVIDE( end = . );
+    PROVIDE( _end = . );
+  } > RAM */
 }
