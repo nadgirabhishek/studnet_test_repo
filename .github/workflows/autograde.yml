@@ -34,13 +34,51 @@ jobs:
           mkdir -p elf out
           cp firmware.elf elf/firmware.elf
 
-      - name: Run Renode (headless via Docker)
+      - name: Run Renode (auto-detect STM32F0 platform)
         run: |
           docker run --rm \
-            -v $PWD:/workspace \
+            -v "$PWD":/workspace \
             -w /workspace \
             antmicro/renode:latest \
-            renode -e 'i @autograding_repo/renode/stm32f0_nucleo.resc' --disable-xwt
+            bash -lc '
+              set -euo pipefail
+              mkdir -p out
+              echo "[Renode] Searching for STM32F0 platform files..."
+              PLAT="$(find /opt/renode/platforms -iname "*stm32f0*.repl" | head -n1 || true)"
+              if [ -z "$PLAT" ]; then
+                echo "[Renode] No stm32f0*.repl found. Listing candidates:"
+                find /opt/renode/platforms -iname "*stm32*.repl" | sed "s/^/  /"
+                echo "[Renode] FATAL: No STM32F0 REPL available in this image."; exit 2
+              fi
+              echo "[Renode] Using platform: $PLAT"
+              # Run Renode headless with robust script inline
+              renode --disable-xwt -e "
+                logFile @out/renode_monitor.log
+                logLevel 0
+                using sysbus
+                mach create \"f0\"
+                machine LoadPlatformDescription @$PLAT
+                sysbus LoadELF @elf/firmware.elf
+                emulation SetGlobalQuantum \"100us\"
+                echo \"ELF loaded and quantum set.\"
+                # Try to enable GPIO access logging under the most common names
+                try
+                  sysbus LogPeripheralAccess sysbus.GPIOA True
+                  echo \"Logging GPIOA\"
+                catch
+                  try
+                    sysbus LogPeripheralAccess sysbus.gpioPortA True
+                    echo \"Logging gpioPortA\"
+                  catch
+                    echo \"WARN: Could not enable GPIOA access logging (name mismatch)\"
+                  end
+                end
+                peripherals
+                emulation RunFor \"10s\"
+                echo \"Run finished.\"
+                quit
+              "
+            '
 
       - name: Grade LED 1Hz
         run: |
